@@ -5,6 +5,7 @@ Reverse proxy for `*.automateit.se` services on the office Debian host.
 ```
 browser ──► Cloudflare (*.automateit.se) ──► tunnel ──► cloudflared ──► edge (nginx, 127.0.0.1:80)
                                                                           ├─ dashboard.automateit.se → iotopen-dashboard:8080
+                                                                          ├─ appmanagement.automateit.se → appmanagement:8080
                                                                           ├─ <name>.automateit.se    → <app>:<port>
                                                                           └─ any other name          → 404
 ```
