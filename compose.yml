@@ -1,0 +1,34 @@
+# Reverse proxy for *.automateit.se on the office Debian host.
+#
+# cloudflared on the host sends every *.automateit.se request to 127.0.0.1:80. nginx picks the service by
+# host name; only host names with a file in sites/ are published, everything else answers 404.
+# Apps join the external Docker network "edge" and are reached by name, so they need no published ports.
+name: edge
+
+services:
+  edge:
+    image: nginxinc/nginx-unprivileged:1.27-alpine
+    container_name: edge
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:80:8080"   # only cloudflared on this host can reach the edge
+    volumes:
+      - ./conf.d:/etc/nginx/conf.d:ro
+      - ./snippets:/etc/nginx/snippets:ro
+      - ./sites:/etc/nginx/sites:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - "no-new-privileges:true"
+    networks: [edge]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+
+networks:
+  edge:
+    name: edge
+    external: true

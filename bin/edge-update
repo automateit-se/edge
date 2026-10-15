@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Fetches the latest edge configuration from GitHub, checks it with nginx -t and reloads.
+# If the new configuration does not pass, the previous one is restored and nothing changes.
+#   sudo edge-update
+set -euo pipefail
+EDGE_DIR="${EDGE_DIR:-/opt/edge}"
+cd "$EDGE_DIR"
+
+prev="$(git rev-parse HEAD)"
+git fetch --quiet origin main
+new="$(git rev-parse origin/main)"
+if [ "$prev" = "$new" ] && [ "${FORCE:-0}" != "1" ]; then
+  echo "Edge-konfigurationen är redan senaste ($(git log -1 --format='%h %s'))."
+  exit 0
+fi
+
+git reset --quiet --hard "$new"
+docker compose up -d --remove-orphans edge >/dev/null
+if docker exec edge nginx -t 2>&1; then
+  docker exec edge nginx -s reload
+  echo "Klart: $(git log -1 --format='%h %s')"
+else
+  echo "Den nya konfigurationen godkändes inte. Återställer $prev." >&2
+  git reset --quiet --hard "$prev"
+  docker exec edge nginx -s reload || docker compose restart edge
+  exit 1
+fi

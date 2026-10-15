@@ -1,0 +1,12 @@
+# Template for a new service. Copy to sites/<name>.conf (only *.conf files are loaded), change the two
+# marked lines, and make sure the app container is on the "edge" network with the alias used below.
+server {
+    listen      8080;
+    server_name appmanagement.automateit.se;            # <- public host name
+
+    location / {
+        set $upstream http://appmanagement:8080;        # <- alias on the edge network : port in the container
+        proxy_pass $upstream;
+        include /etc/nginx/snippets/proxy.conf;
+    }
+}
