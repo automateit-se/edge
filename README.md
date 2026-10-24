@@ -51,3 +51,7 @@ Creates the `edge` network, clones this repository to `/opt/edge`, connects the 
 | `snippets/proxy.conf` | headers, WebSocket, timeouts, HSTS for every site |
 | `sites/*.conf` | one file per published host name |
 | `bin/edge-update` | update from GitHub with `nginx -t` check and rollback |
+
+## License
+
+MIT, see [LICENSE](LICENSE).
