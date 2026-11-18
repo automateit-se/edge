@@ -7,7 +7,8 @@ name: edge
 
 services:
   edge:
-    image: nginxinc/nginx-unprivileged:1.27-alpine
+    # EDGE_IMAGE is only set by edge-update, to start the previous build again when a new one fails
+    image: ${EDGE_IMAGE:-nginxinc/nginx-unprivileged:1.31-alpine}
     container_name: edge
     restart: unless-stopped
     ports:

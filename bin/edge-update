@@ -1,27 +1,65 @@
 #!/usr/bin/env bash
-# Fetches the latest edge configuration from GitHub, checks it with nginx -t and reloads.
-# If the new configuration does not pass, the previous one is restored and nothing changes.
-#   sudo edge-update
+# Updates the edge: the configuration from GitHub (main) and the nginx image (a newer build of the tag in
+# compose.yml, which is how nginx security fixes arrive). The result must pass nginx -t and answer on /healthz;
+# otherwise the previous configuration and image are put back and nothing changes.
+#   sudo edge-update             configuration and image
+#   sudo FORCE=1 edge-update     check and reload even when nothing changed
 set -euo pipefail
 EDGE_DIR="${EDGE_DIR:-/opt/edge}"
+INSTALLED="${INSTALLED:-/usr/local/sbin/edge-update}"
 cd "$EDGE_DIR"
 
+PREVIOUS=edge-update/previous:latest # local tag of the build that ran before, to start it again on failure
+image_of() { docker inspect -f '{{.Image}}' edge 2>/dev/null || true; }
+nginx_version() { docker exec edge nginx -v 2>&1 | sed 's|.*nginx/||'; }
+# nginx accepts the configuration and the edge answers, within 20 seconds of a (re)start
+healthy() {
+  for _ in $(seq 1 20); do
+    if docker exec edge nginx -t >/dev/null 2>&1 && docker exec edge wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 prev="$(git rev-parse HEAD)"
+prev_image="$(image_of)"
+[ -z "$prev_image" ] || docker tag "$prev_image" "$PREVIOUS"
+
+rollback() {
+  echo "$1 Återställer $(git log -1 --format='%h' "$prev") och den tidigare imagen." >&2
+  git reset --quiet --hard "$prev"
+  if [ -n "$prev_image" ] && [ "$(image_of)" != "$prev_image" ]; then
+    # the tag in compose.yml now names the new build: start the previous one under its own tag
+    EDGE_IMAGE="$PREVIOUS" docker compose up -d edge >/dev/null
+  else
+    docker exec edge nginx -s reload 2>/dev/null || docker compose up -d edge >/dev/null
+  fi
+  exit 1
+}
+
 git fetch --quiet origin main
 new="$(git rev-parse origin/main)"
-if [ "$prev" = "$new" ] && [ "${FORCE:-0}" != "1" ]; then
-  echo "Edge-konfigurationen är redan senaste ($(git log -1 --format='%h %s'))."
+[ "$prev" = "$new" ] || git reset --quiet --hard "$new"
+
+# a failed download (no internet, Docker Hub's rate limit) keeps the image there is
+docker compose pull --quiet edge 2>/dev/null || echo "Kunde inte hämta någon ny image just nu; använder den som finns." >&2
+docker compose up -d --remove-orphans edge >/dev/null 2>&1 || rollback "Edge startade inte."
+
+if [ "$prev" = "$new" ] && [ "$prev_image" = "$(image_of)" ] && [ "${FORCE:-0}" != "1" ]; then
+  echo "Edge är redan senaste: $(git log -1 --format='%h %s'), nginx $(nginx_version)."
   exit 0
 fi
 
-git reset --quiet --hard "$new"
-docker compose up -d --remove-orphans edge >/dev/null
-if docker exec edge nginx -t 2>&1; then
-  docker exec edge nginx -s reload
-  echo "Klart: $(git log -1 --format='%h %s')"
-else
-  echo "Den nya konfigurationen godkändes inte. Återställer $prev." >&2
-  git reset --quiet --hard "$prev"
-  docker exec edge nginx -s reload || docker compose restart edge
-  exit 1
+healthy || {
+  docker exec edge nginx -t 2>&1 | tail -3 >&2 || true
+  rollback "Den nya edge-versionen godkändes inte (nginx -t eller /healthz)."
+}
+docker exec edge nginx -s reload
+
+# the installed command follows the repository, so the next run is this version
+if [ -w "$(dirname "$INSTALLED")" ] && ! cmp -s bin/edge-update "$INSTALLED"; then
+  install -m 0755 bin/edge-update "$INSTALLED"
 fi
+echo "Klart: $(git log -1 --format='%h %s'), nginx $(nginx_version)$([ "$prev_image" != "$(image_of)" ] && echo ' (ny image)')."
